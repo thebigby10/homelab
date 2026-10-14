@@ -1,6 +1,6 @@
 # Headless KVM Host on Rocky Linux, Managed from a MacBook
 
-A complete guide to turning a Lenovo ThinkCentre into a headless KVM virtualization host running Rocky Linux, and managing it and its VMs entirely from macOS.
+Step-by-step guide to turning a Lenovo ThinkCentre into a headless KVM virtualization host on Rocky Linux, fully managed from a MacBook via SSH, virsh, Cockpit, and virt-manager. Includes setup for office and shared networks without router access.
 
 ---
 
@@ -10,6 +10,7 @@ A complete guide to turning a Lenovo ThinkCentre into a headless KVM virtualizat
 2. [Placeholders Used](#placeholders-used)
 3. [Phase 1: Preparation (Mac)](#phase-1-preparation-mac)
 4. [Phase 2: Install Rocky Linux (ThinkCentre)](#phase-2-install-rocky-linux-thinkcentre)
+   - [2.4 No Router Access (Office / Shared Networks)](#24-no-router-access-office--shared-networks)
 5. [Phase 3: SSH Access (Mac)](#phase-3-ssh-access-mac)
 6. [Phase 4: Configure the Host (over SSH)](#phase-4-configure-the-host-over-ssh)
 7. [Phase 5: Management Tools (Mac)](#phase-5-management-tools-mac)
@@ -32,7 +33,7 @@ A complete guide to turning a Lenovo ThinkCentre into a headless KVM virtualizat
 **Ways to manage the host from the Mac:**
 
 - **SSH + `virsh`**: full control from the terminal
-- **Cockpit**: web dashboard at `https://<host-ip>:9090`, including VM consoles in the browser
+- **Cockpit**: web dashboard at `https://<host>:9090`, including VM consoles in the browser
 - **virt-manager (optional)**: GUI app installed on the Mac via Homebrew, connects over SSH
 
 > **Note:** virt-manager is deprecated and **not available on Rocky Linux 10 hosts**; Cockpit is the official replacement. Running virt-manager *on your Mac* still works, because it only talks to libvirt over SSH.
@@ -46,10 +47,13 @@ Replace these with your own values throughout the guide:
 | Item | Example |
 |---|---|
 | ThinkCentre IP | `192.168.1.50` |
+| ThinkCentre hostname | `thinkcentre` |
 | Router / gateway | `192.168.1.1` |
 | Linux username on host | `you` |
 | Username inside VM | `user` |
 | First VM name | `vm1` |
+
+> **On an office or shared network without router access?** Wherever this guide uses `192.168.1.50`, use `thinkcentre.local` (or the Tailscale name) instead. See [2.4 No Router Access](#24-no-router-access-office--shared-networks).
 
 ---
 
@@ -109,7 +113,7 @@ sudo dd if=~/Downloads/Rocky-10*-minimal.iso of=/dev/rdisk4 bs=4m status=progres
 | Section | Setting |
 |---|---|
 | **Software Selection** | Minimal Install |
-| **Network & Hostname** | Enable Ethernet; set hostname, e.g. `thinkcentre` |
+| **Network & Hostname** | Enable Ethernet; set hostname to `thinkcentre` |
 | **User Creation** | Create `you`; tick **"Make this user administrator"** (root can stay locked) |
 | **Installation Destination** | See below (important) |
 
@@ -122,7 +126,9 @@ sudo dd if=~/Downloads/Rocky-10*-minimal.iso of=/dev/rdisk4 bs=4m status=progres
 
 Click **Begin Installation**, then reboot when it finishes.
 
-### 2.3 Give the Host a Fixed IP
+### 2.3 Give the Host a Fixed IP (Home / Router Access)
+
+> **No router access?** Skip this step and go to [2.4](#24-no-router-access-office--shared-networks).
 
 **Option A (recommended):** In your router, create a **DHCP reservation** for the ThinkCentre's MAC address.
 
@@ -138,6 +144,74 @@ ip a                                   # confirm the IP
 
 You can now disconnect the monitor and keyboard.
 
+### 2.4 No Router Access (Office / Shared Networks)
+
+If you can't access the router (common in offices), **don't rely on a fixed IP**. Reach the host by **name** instead, so it doesn't matter if its IP changes.
+
+#### Step 1: Check Connectivity
+
+Office networks often separate Wi-Fi from wired devices or block device-to-device traffic. At the ThinkCentre console, find its current IP:
+
+```bash
+ip a                                   # e.g. 10.20.5.37
+```
+
+Then from the Mac:
+
+```bash
+ping 10.20.5.37
+ssh you@10.20.5.37
+```
+
+| Result | Next Step |
+|---|---|
+| Ping and SSH work | Use **Option A** (mDNS) |
+| Timeout / no response | The network isolates devices; use **Option B** (Tailscale) |
+
+#### Option A: Hostname via mDNS (`thinkcentre.local`)
+
+macOS resolves `.local` names natively, so you only need to set this up on the host:
+
+```bash
+sudo hostnamectl set-hostname thinkcentre
+sudo dnf install -y avahi
+sudo systemctl enable --now avahi-daemon
+sudo firewall-cmd --add-service=mdns --permanent
+sudo firewall-cmd --reload
+```
+
+Test from the Mac:
+
+```bash
+ping thinkcentre.local
+```
+
+Use `thinkcentre.local` as the `HostName` in [Phase 3](#phase-3-ssh-access-mac). Everything else in this guide works unchanged:
+
+- `ssh thinkcentre`
+- `virsh` (via `LIBVIRT_DEFAULT_URI`)
+- `ssh vm1` (via `ProxyJump`)
+- Cockpit at `https://thinkcentre.local:9090`
+
+> **Limitation:** mDNS only works within the same network segment. If the Mac is on office Wi-Fi and the ThinkCentre is wired, they may be on different segments. In that case `.local` won't resolve even if ping by IP works, so use Option B.
+
+#### Option B: Tailscale (Works on Any Network Layout)
+
+Tailscale creates a private connection between your devices. It works across Wi-Fi/wired separation and IP changes, and from outside the office.
+
+1. Follow the setup in [Optional: Access from Anywhere (Tailscale)](#optional-access-from-anywhere-tailscale). For the first connection, use the host's current IP from Step 1, or run the host commands at the console.
+2. Use the Tailscale name `thinkcentre` (MagicDNS) or its `100.x.x.x` IP as the `HostName` in [Phase 3](#phase-3-ssh-access-mac).
+
+> **Note:** Some companies don't allow VPN-style tools. Check your IT policy first.
+
+#### Things to Avoid on an Office Network
+
+| Avoid | Why | Instead |
+|---|---|---|
+| Setting a static IP yourself | It may conflict with an address the DHCP server gives to someone else | Ask IT for a DHCP reservation or an assigned static IP |
+| Bridged VM networking | Puts each VM directly on the office network, using office IPs | Keep VMs on the default **NAT** network (hidden behind the host) |
+| Running a server without telling anyone | Security tools may flag a new machine running SSH | Let IT know about the setup |
+
 ---
 
 ## Phase 3: SSH Access (Mac)
@@ -146,14 +220,18 @@ You can now disconnect the monitor and keyboard.
 
 ```bash
 ssh-keygen -t ed25519                  # skip if you already have a key
-ssh-copy-id you@192.168.1.50
+ssh-copy-id you@192.168.1.50           # or you@thinkcentre.local
 ```
 
 ### 3.2 Add the Host to `~/.ssh/config`
 
+Choose the `HostName` that matches your network:
+
 ```
 Host thinkcentre
-    HostName 192.168.1.50
+    HostName 192.168.1.50              # home with fixed IP
+    # HostName thinkcentre.local       # office, mDNS (2.4 Option A)
+    # HostName thinkcentre             # Tailscale (2.4 Option B)
     User you
 ```
 
@@ -257,7 +335,7 @@ Tips:
 
 ### 5.3 Cockpit (Web Dashboard)
 
-1. Open `https://192.168.1.50:9090` in your browser.
+1. Open `https://192.168.1.50:9090` (or `https://thinkcentre.local:9090`) in your browser.
 2. Accept the self-signed certificate warning.
 3. Log in as `you` and click **"Turn on administrative access."**
 4. Use the **Virtual Machines** tab to create, edit, and view VMs (with a graphical console in the browser).
@@ -378,12 +456,14 @@ sudo tailscale up
 
 Then update `~/.ssh/config` so `HostName` for `thinkcentre` points to its Tailscale name or IP. All SSH, `virsh`, Cockpit, and `ProxyJump` VM access will work from anywhere, with no router port forwarding.
 
+> In an office, check your IT policy before installing Tailscale.
+
 ---
 
 ## Performance Notes
 
 - **VMs run entirely on the ThinkCentre's hardware.** With KVM, guests typically get ~95%+ of bare-metal CPU performance. The Mac only sends keystrokes and receives text.
-- **SSH on a home LAN** uses a few KB/s at ~1 ms latency, so typing feels instant, even over Wi-Fi. The extra `ProxyJump` hop adds no noticeable delay.
+- **SSH on a local network** uses a few KB/s at ~1 ms latency, so typing feels instant, even over Wi-Fi. The extra `ProxyJump` hop adds no noticeable delay.
 - **For best VM performance:**
   - CPU model: `host-passthrough`
   - Disk and network: **virtio**
@@ -399,6 +479,9 @@ Then update `~/.ssh/config` so `HostName` for `thinkcentre` points to its Tailsc
 | `virsh`: permission denied | Make sure `you` is in the `libvirt` group (`groups`), then log out and back in |
 | virt-manager on Mac hangs when connecting | Use SSH keys (no passwords); include `?socket=...` and `--no-fork` |
 | Cockpit page won't load | `sudo systemctl status cockpit.socket` and check the firewall (Phase 4.5) |
+| `thinkcentre.local` doesn't resolve | Check `avahi-daemon` is running and `mdns` is allowed in the firewall; if Mac and host are on different segments, use Tailscale |
+| Can't reach the host at all on office network | The network may isolate devices; use Tailscale (2.4 Option B) or ask IT |
+| Host IP changed and SSH stopped working | Use `thinkcentre.local` or Tailscale instead of a raw IP (2.4) |
 | `virsh domifaddr` shows nothing | Wait for the VM to fully boot; try `virsh domifaddr vm1 --source arp` |
 | `virsh console` is blank | Press Enter; if still blank, enable `serial-getty@ttyS0` inside the VM |
 | Rocky 10 VM won't boot | Use `--cpu host-passthrough` (Rocky 10 guests need x86-64-v3) |
