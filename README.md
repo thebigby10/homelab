@@ -1,6 +1,6 @@
 # Headless KVM Host on Rocky Linux, Managed from a MacBook
 
-Step-by-step guide to turning a Lenovo ThinkCentre into a headless KVM virtualization host on Rocky Linux, fully managed from a MacBook via SSH, virsh, Cockpit, and virt-manager. Includes setup for office and shared networks without router access.
+Step-by-step guide to turning a Lenovo ThinkCentre into a headless KVM virtualization host on Rocky Linux, fully managed from a MacBook via SSH, virsh, Cockpit, and virt-manager. Includes setup for office and shared networks without router access, and instructions for both **fish** and **zsh** shells on macOS.
 
 ---
 
@@ -38,6 +38,8 @@ Step-by-step guide to turning a Lenovo ThinkCentre into a headless KVM virtualiz
 
 > **Note:** virt-manager is deprecated and **not available on Rocky Linux 10 hosts**; Cockpit is the official replacement. Running virt-manager *on your Mac* still works, because it only talks to libvirt over SSH.
 
+> **Shells:** Mac commands in this guide work in both **fish** and **zsh**. Where they differ, both versions are shown. Commands run on the ThinkCentre or inside VMs use the Linux default shell (bash).
+
 ---
 
 ## Placeholders Used
@@ -59,7 +61,37 @@ Replace these with your own values throughout the guide:
 
 ## Phase 1: Preparation (Mac)
 
-### 1.1 Check the ThinkCentre's CPU
+### 1.1 Mac Prerequisites (Homebrew + Shell)
+
+Install Homebrew if you don't have it:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Homebrew's installer only prints PATH setup instructions for zsh/bash. Add Homebrew to your shell:
+
+**fish** (add to `~/.config/fish/config.fish`):
+
+```fish
+# Apple Silicon
+/opt/homebrew/bin/brew shellenv | source
+# Intel Macs: use /usr/local/bin/brew instead
+```
+
+**zsh** (add to `~/.zprofile`):
+
+```bash
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+Open a new terminal and confirm:
+
+```bash
+brew --version
+```
+
+### 1.2 Check the ThinkCentre's CPU
 
 Rocky Linux 10 requires an **x86-64-v3** CPU (Intel: roughly 4th-gen Core / Haswell or newer).
 
@@ -72,13 +104,13 @@ Rocky Linux 10 requires an **x86-64-v3** CPU (Intel: roughly 4th-gen Core / Hasw
 
 If `x86-64-v3 (supported, searched)` appears, Rocky 10 will work.
 
-### 1.2 Download the ISO
+### 1.3 Download the ISO
 
 From <https://rockylinux.org/download>, download the **x86_64 Minimal ISO**.
 
 > Make sure it's **x86_64**, not ARM/aarch64, even though you're downloading on a Mac.
 
-### 1.3 Create a Bootable USB
+### 1.4 Create a Bootable USB
 
 **Option A: balenaEtcher (easiest)**
 
@@ -95,6 +127,8 @@ diskutil list                          # find the USB, e.g. /dev/disk4
 diskutil unmountDisk /dev/disk4
 sudo dd if=~/Downloads/Rocky-10*-minimal.iso of=/dev/rdisk4 bs=4m status=progress
 ```
+
+> **fish users:** fish treats a wildcard that matches nothing as an error ("No matches for wildcard") instead of passing it through. If you see this, run `ls ~/Downloads` and type the ISO filename out in full.
 
 ---
 
@@ -315,8 +349,32 @@ Open a **new** terminal on the Mac and run `ssh thinkcentre` to confirm access *
 
 ```bash
 brew install libvirt
+```
+
+Set the default connection so `virsh` always targets the ThinkCentre:
+
+**fish** (universal variable, persists across sessions and restarts):
+
+```fish
+set -Ux LIBVIRT_DEFAULT_URI qemu+ssh://thinkcentre/system
+```
+
+Or, to keep it in your config file, add this to `~/.config/fish/config.fish`:
+
+```fish
+set -gx LIBVIRT_DEFAULT_URI qemu+ssh://thinkcentre/system
+```
+
+**zsh:**
+
+```bash
 echo 'export LIBVIRT_DEFAULT_URI="qemu+ssh://thinkcentre/system"' >> ~/.zshrc
 source ~/.zshrc
+```
+
+Test it:
+
+```bash
 virsh list --all                       # runs against the ThinkCentre
 ```
 
@@ -421,7 +479,7 @@ sudo systemctl enable --now serial-getty@ttyS0
 
 ## Phase 7: Daily Cheat Sheet
 
-All commands run from the Mac (thanks to `LIBVIRT_DEFAULT_URI`):
+All commands run from the Mac (thanks to `LIBVIRT_DEFAULT_URI`), in fish or zsh:
 
 | Task | Command |
 |---|---|
@@ -476,6 +534,9 @@ Then update `~/.ssh/config` so `HostName` for `thinkcentre` points to its Tailsc
 
 | Problem | Fix |
 |---|---|
+| `brew: command not found` (fish) | Add `/opt/homebrew/bin/brew shellenv \| source` to `~/.config/fish/config.fish` (Phase 1.1) |
+| "No matches for wildcard" (fish) | Type the full filename instead of using `*` (Phase 1.4) |
+| `virsh` connects to the Mac instead of the host | Check `echo $LIBVIRT_DEFAULT_URI`; set it as shown in Phase 5.1 for your shell |
 | `virsh`: permission denied | Make sure `you` is in the `libvirt` group (`groups`), then log out and back in |
 | virt-manager on Mac hangs when connecting | Use SSH keys (no passwords); include `?socket=...` and `--no-fork` |
 | Cockpit page won't load | `sudo systemctl status cockpit.socket` and check the firewall (Phase 4.5) |
