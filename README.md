@@ -1,6 +1,6 @@
 # Headless KVM Host on Rocky Linux, Managed from a MacBook
 
-Step-by-step guide to turning a Lenovo ThinkCentre into a headless KVM virtualization host on Rocky Linux, fully managed from a MacBook via SSH, virsh, Cockpit, and virt-manager. Includes setup for office and shared networks without router access, and instructions for both **fish** and **zsh** shells on macOS.
+Step-by-step guide to turning a Lenovo ThinkCentre into a headless KVM virtualization host on Rocky Linux, fully managed from a MacBook via SSH, virsh, Cockpit, and virt-manager. Includes setup for office and shared networks without router access (mDNS, Tailscale, or the open-source alternative NetBird), and instructions for both **fish** and **zsh** shells on macOS.
 
 ---
 
@@ -16,7 +16,7 @@ Step-by-step guide to turning a Lenovo ThinkCentre into a headless KVM virtualiz
 7. [Phase 5: Management Tools (Mac)](#phase-5-management-tools-mac)
 8. [Phase 6: Create Your First VM](#phase-6-create-your-first-vm)
 9. [Phase 7: Daily Cheat Sheet](#phase-7-daily-cheat-sheet)
-10. [Optional: Access from Anywhere (Tailscale)](#optional-access-from-anywhere-tailscale)
+10. [Optional: Access from Anywhere (Tailscale or NetBird)](#optional-access-from-anywhere-tailscale-or-netbird)
 11. [Performance Notes](#performance-notes)
 12. [Troubleshooting](#troubleshooting)
 
@@ -55,7 +55,7 @@ Replace these with your own values throughout the guide:
 | Username inside VM | `user` |
 | First VM name | `vm1` |
 
-> **On an office or shared network without router access?** Wherever this guide uses `192.168.1.50`, use `thinkcentre.local` (or the Tailscale name) instead. See [2.4 No Router Access](#24-no-router-access-office--shared-networks).
+> **On an office or shared network without router access?** Wherever this guide uses `192.168.1.50`, use `thinkcentre.local`, the Tailscale name (`thinkcentre`), or the NetBird name (`thinkcentre.netbird.cloud`) instead. See [2.4 No Router Access](#24-no-router-access-office--shared-networks).
 
 ---
 
@@ -95,7 +95,9 @@ brew --version
 
 Rocky Linux 10 requires an **x86-64-v3** CPU (Intel: roughly 4th-gen Core / Haswell or newer).
 
-- If your CPU is older, use **Rocky Linux 9** instead (supported until 2032, and still includes virt-manager on the host). The rest of this guide is nearly identical.
+> **Check the exact CPU model, not just the generation.** Many ThinkCentre Tiny models ship with **Pentium or Celeron** chips, which lack AVX even in recent generations and are therefore *not* x86-64-v3.
+
+- If your CPU is older (or a Pentium/Celeron), use **Rocky Linux 9** instead (supported until 2032, and still includes virt-manager on the host). The rest of this guide is nearly identical.
 - If a Linux system is already on the machine, you can check with:
 
 ```bash
@@ -126,6 +128,7 @@ Open Etcher → select the ISO → select the USB drive → **Flash**.
 diskutil list                          # find the USB, e.g. /dev/disk4
 diskutil unmountDisk /dev/disk4
 sudo dd if=~/Downloads/Rocky-10*-minimal.iso of=/dev/rdisk4 bs=4m status=progress
+diskutil eject /dev/disk4
 ```
 
 > **fish users:** fish treats a wildcard that matches nothing as an error ("No matches for wildcard") instead of passing it through. If you see this, run `ls ~/Downloads` and type the ISO filename out in full.
@@ -151,7 +154,7 @@ sudo dd if=~/Downloads/Rocky-10*-minimal.iso of=/dev/rdisk4 bs=4m status=progres
 | **User Creation** | Create `you`; tick **"Make this user administrator"** (root can stay locked) |
 | **Installation Destination** | See below (important) |
 
-**Disk layout (important):** The default automatic layout gives `/` only ~70 GB and puts the rest into `/home`. VM disks live in `/var/lib/libvirt/images` (on `/`), so you'd run out of space quickly.
+**Disk layout (important):** The default automatic layout gives `/` only ~70 GB and puts the rest into `/home`. VM disks live in `/var/lib/libvirt/images` (on `/`), so you'd run out of space quickly. The default filesystem (XFS) can't be shrunk later, so fix this now.
 
 1. Choose **Custom**.
 2. Click **"Click here to create them automatically."**
@@ -200,7 +203,7 @@ ssh you@10.20.5.37
 | Result | Next Step |
 |---|---|
 | Ping and SSH work | Use **Option A** (mDNS) |
-| Timeout / no response | The network isolates devices; use **Option B** (Tailscale) |
+| Timeout / no response | The network isolates devices; use **Option B** (mesh VPN: Tailscale or NetBird) |
 
 #### Option A: Hostname via mDNS (`thinkcentre.local`)
 
@@ -229,12 +232,18 @@ Use `thinkcentre.local` as the `HostName` in [Phase 3](#phase-3-ssh-access-mac).
 
 > **Limitation:** mDNS only works within the same network segment. If the Mac is on office Wi-Fi and the ThinkCentre is wired, they may be on different segments. In that case `.local` won't resolve even if ping by IP works, so use Option B.
 
-#### Option B: Tailscale (Works on Any Network Layout)
+#### Option B: Mesh VPN (Tailscale or NetBird; Works on Any Network Layout)
 
-Tailscale creates a private connection between your devices. It works across Wi-Fi/wired separation and IP changes, and from outside the office.
+A mesh VPN creates a private connection between your devices. It works across Wi-Fi/wired separation and IP changes, and from outside the office. Choose one:
 
-1. Follow the setup in [Optional: Access from Anywhere (Tailscale)](#optional-access-from-anywhere-tailscale). For the first connection, use the host's current IP from Step 1, or run the host commands at the console.
-2. Use the Tailscale name `thinkcentre` (MagicDNS) or its `100.x.x.x` IP as the `HostName` in [Phase 3](#phase-3-ssh-access-mac).
+| | Tailscale | NetBird |
+|---|---|---|
+| Cost | Free Personal plan | Free hosted tier |
+| License | Open-source clients, proprietary coordination server | Fully open source; can be self-hosted later |
+| Host name to use | `thinkcentre` (MagicDNS) | `thinkcentre.netbird.cloud` |
+
+1. Follow the setup in [Optional: Access from Anywhere](#optional-access-from-anywhere-tailscale-or-netbird). For the first connection, use the host's current IP from Step 1, or run the host commands at the console.
+2. Use the VPN name or its `100.x.x.x` IP as the `HostName` in [Phase 3](#phase-3-ssh-access-mac).
 
 > **Note:** Some companies don't allow VPN-style tools. Check your IT policy first.
 
@@ -259,13 +268,18 @@ ssh-copy-id you@192.168.1.50           # or you@thinkcentre.local
 
 ### 3.2 Add the Host to `~/.ssh/config`
 
-Choose the `HostName` that matches your network:
+Keep exactly one `HostName` line, matching your network. (Comments go on their own lines; older OpenSSH versions reject comments at the end of a setting.)
 
 ```
 Host thinkcentre
-    HostName 192.168.1.50              # home with fixed IP
-    # HostName thinkcentre.local       # office, mDNS (2.4 Option A)
-    # HostName thinkcentre             # Tailscale (2.4 Option B)
+    # Home with fixed IP:
+    HostName 192.168.1.50
+    # Office, mDNS (2.4 Option A):
+    # HostName thinkcentre.local
+    # Tailscale (2.4 Option B):
+    # HostName thinkcentre
+    # NetBird (2.4 Option B):
+    # HostName thinkcentre.netbird.cloud
     User you
 ```
 
@@ -301,7 +315,13 @@ sudo systemctl enable --now cockpit.socket
 sudo usermod -aG libvirt you
 ```
 
-Log out and back in for the group change to take effect.
+Make plain `virsh` on the host target the system VMs. Without this, `virsh` run as a normal user connects to `qemu:///session` and won't see VMs created with `sudo`:
+
+```bash
+echo 'export LIBVIRT_DEFAULT_URI=qemu:///system' >> ~/.bashrc
+```
+
+Log out and back in for the group change and variable to take effect.
 
 ### 4.3 Start the Default VM Network
 
@@ -333,13 +353,16 @@ sudo firewall-cmd --reload
 
 > ⚠️ Only do this **after** confirming key-based login works.
 
+sshd uses the **first** value it reads for each setting, and files in `sshd_config.d/` load in alphabetical order. The file is named `00-...` so it wins over installer-created files such as `01-permitrootlogin.conf`.
+
 ```bash
-echo -e "PasswordAuthentication no\nPermitRootLogin no" | \
-  sudo tee /etc/ssh/sshd_config.d/99-hardening.conf
-sudo systemctl restart sshd
+printf "PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n" | \
+  sudo tee /etc/ssh/sshd_config.d/00-hardening.conf
+sudo sshd -t && sudo systemctl restart sshd
+sudo sshd -T | grep -Ei 'passwordauth|kbdinteractive|permitrootlogin'
 ```
 
-Open a **new** terminal on the Mac and run `ssh thinkcentre` to confirm access **before** closing your current session.
+All three settings should show `no`. Open a **new** terminal on the Mac and run `ssh thinkcentre` to confirm access **before** closing your current session.
 
 ---
 
@@ -389,11 +412,12 @@ Tips:
 
 - **SSH keys are required.** The Mac build can't display SSH password prompts properly.
 - The `?socket=...` parameter and `--no-fork` avoid common macOS connection errors.
+- If you see `nc: command not found`, install netcat on the host: `sudo dnf install -y nmap-ncat`.
 - The Mac build is community-maintained; if an update breaks it, use Cockpit.
 
 ### 5.3 Cockpit (Web Dashboard)
 
-1. Open `https://192.168.1.50:9090` (or `https://thinkcentre.local:9090`) in your browser.
+1. Open `https://192.168.1.50:9090` (or `https://thinkcentre.local:9090`, `https://thinkcentre.netbird.cloud:9090`, etc.) in your browser.
 2. Accept the self-signed certificate warning.
 3. Log in as `you` and click **"Turn on administrative access."**
 4. Use the **Virtual Machines** tab to create, edit, and view VMs (with a graphical console in the browser).
@@ -402,16 +426,26 @@ Tips:
 
 ## Phase 6: Create Your First VM
 
+> Steps 6.1–6.2 run **on the ThinkCentre** (`ssh thinkcentre`). From 6.3 onward, `virsh` commands work from the Mac (via `LIBVIRT_DEFAULT_URI`) or the host (via the variable set in 4.2).
+
 ### 6.1 Download an Installer ISO on the Host
 
-Downloading directly on the host is faster than copying from the Mac. Run this on the ThinkCentre:
+Downloading directly on the host is faster than copying from the Mac:
 
 ```bash
 cd /var/lib/libvirt/images
 sudo curl -LO https://download.rockylinux.org/pub/rocky/10/isos/x86_64/Rocky-10-latest-x86_64-minimal.iso
 ```
 
+> If `curl` returns a 404, open the directory in a browser and copy the current filename; the "latest" names change occasionally.
+
 ### 6.2 Create the VM (Text-Mode Installer in Your Terminal)
+
+Start a `tmux` session first, so a dropped SSH connection doesn't interrupt the installer view (reattach with `tmux attach -t install`):
+
+```bash
+tmux new -s install
+```
 
 ```bash
 sudo virt-install \
@@ -437,11 +471,21 @@ sudo virt-install \
 virsh autostart vm1
 ```
 
-### 6.4 Find the VM's IP
+### 6.4 Find and Pin the VM's IP
 
 ```bash
 virsh domifaddr vm1                    # e.g. 192.168.122.10
 ```
+
+libvirt's DHCP leases aren't guaranteed to persist, so pin the address to keep `ProxyJump` working:
+
+```bash
+virsh domiflist vm1                    # note the MAC, e.g. 52:54:00:ab:cd:ef
+virsh net-update default add ip-dhcp-host \
+  "<host mac='52:54:00:ab:cd:ef' name='vm1' ip='192.168.122.10'/>" --live --config
+```
+
+The reservation applies the next time the VM requests a lease (for example, after a reboot).
 
 ### 6.5 Add the VM to the Mac's `~/.ssh/config`
 
@@ -495,33 +539,92 @@ All commands run from the Mac (thanks to `LIBVIRT_DEFAULT_URI`), in fish or zsh:
 | List snapshots | `virsh snapshot-list vm1` |
 | Revert to snapshot | `virsh snapshot-revert vm1 clean-install` |
 | Autostart on boot | `virsh autostart vm1` |
-| Delete VM + disk | `virsh undefine vm1 --remove-all-storage` |
+| Delete VM + disk | `virsh undefine vm1 --remove-all-storage --nvram --snapshots-metadata` |
 | SSH into VM | `ssh vm1` |
 | Update the host | `ssh thinkcentre 'sudo dnf update -y'` |
+| VPN status (NetBird) | `netbird status` (add `-d` for details) |
+| VPN status (Tailscale) | `tailscale status` |
 
 ---
 
-## Optional: Access from Anywhere (Tailscale)
+## Optional: Access from Anywhere (Tailscale or NetBird)
+
+Both options give the ThinkCentre a stable private name and IP that work from any network, with no router port forwarding. Once connected, update `HostName` for `thinkcentre` in `~/.ssh/config` (Phase 3.2). All SSH, `virsh`, Cockpit, and `ProxyJump` VM access then works unchanged.
+
+> In an office, check your IT policy before installing either one.
+
+### Option 1: Tailscale
 
 **On the host:**
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
+sudo tailscale up                      # prints a login URL; open it on the Mac
 ```
 
 **On the Mac:** Install Tailscale from the App Store and sign in with the same account.
 
-Then update `~/.ssh/config` so `HostName` for `thinkcentre` points to its Tailscale name or IP. All SSH, `virsh`, Cockpit, and `ProxyJump` VM access will work from anywhere, with no router port forwarding.
+Use `HostName thinkcentre` (MagicDNS) or the host's `100.x.x.x` IP.
 
-> In an office, check your IT policy before installing Tailscale.
+### Option 2: NetBird (Open Source)
+
+NetBird is a fully open-source alternative with a free hosted tier. You can self-host its control server later without changing clients. The headless host joins with a **setup key** instead of a browser login.
+
+**1. Create an account** at <https://app.netbird.io>.
+
+**2. Connect the Mac.** Download the macOS installer from the dashboard (**Add Peer → macOS**), open NetBird from the menu bar, click **Connect**, and sign in. Or use Homebrew:
+
+```bash
+brew install netbirdio/tap/netbird
+brew install --cask netbirdio/tap/netbird-ui
+sudo netbird service install
+sudo netbird service start
+netbird up                             # opens the browser to sign in
+```
+
+**3. Create a setup key.** In the dashboard: **Setup Keys → Create Setup Key**, then name it and click **Create**. A one-off key is fine.
+
+> Don't mark the key as **ephemeral**, or the host is removed from your network whenever it goes offline.
+
+**4. Connect the ThinkCentre:**
+
+```bash
+curl -fsSL https://pkgs.netbird.io/install.sh | sh
+sudo netbird up --setup-key <YOUR_SETUP_KEY>
+netbird status
+```
+
+The script adds NetBird's repository and installs it as a system service, so it reconnects after reboots and `dnf update` keeps it current.
+
+**5. Find the host's name.** Each peer gets a name under `netbird.cloud`, based on its hostname: usually `thinkcentre.netbird.cloud`. Confirm it on the dashboard's **Peers** page or with `netbird status -d`, then test from the Mac:
+
+```bash
+ping thinkcentre.netbird.cloud
+```
+
+Use `HostName thinkcentre.netbird.cloud` in `~/.ssh/config`, and Cockpit at `https://thinkcentre.netbird.cloud:9090`.
+
+**NetBird commands:**
+
+| Task | Command |
+|---|---|
+| Check connection and peers | `netbird status` (add `-d` for details) |
+| Connect | `netbird up` |
+| Disconnect | `netbird down` |
+| Remove device from your network | `sudo netbird logout` |
+| Restart the service (host) | `sudo systemctl restart netbird` |
+
+**Tips:**
+
+- The default access policy lets all your peers reach each other. If you add other people or devices, tighten it under **Access Control → Policies**, for example by allowing only your Mac to reach the ThinkCentre on ports 22 and 9090.
+- NetBird connects devices directly when possible and falls back to relay servers on strict networks. Relayed connections work but are slower; `netbird status -d` shows whether each peer is direct (P2P) or relayed.
 
 ---
 
 ## Performance Notes
 
 - **VMs run entirely on the ThinkCentre's hardware.** With KVM, guests typically get ~95%+ of bare-metal CPU performance. The Mac only sends keystrokes and receives text.
-- **SSH on a local network** uses a few KB/s at ~1 ms latency, so typing feels instant, even over Wi-Fi. The extra `ProxyJump` hop adds no noticeable delay.
+- **SSH on a local network** uses a few KB/s at ~1 ms latency, so typing feels instant, even over Wi-Fi. The extra `ProxyJump` hop adds no noticeable delay. Over a mesh VPN, latency depends on whether the connection is direct or relayed.
 - **For best VM performance:**
   - CPU model: `host-passthrough`
   - Disk and network: **virtio**
@@ -537,14 +640,23 @@ Then update `~/.ssh/config` so `HostName` for `thinkcentre` points to its Tailsc
 | `brew: command not found` (fish) | Add `/opt/homebrew/bin/brew shellenv \| source` to `~/.config/fish/config.fish` (Phase 1.1) |
 | "No matches for wildcard" (fish) | Type the full filename instead of using `*` (Phase 1.4) |
 | `virsh` connects to the Mac instead of the host | Check `echo $LIBVIRT_DEFAULT_URI`; set it as shown in Phase 5.1 for your shell |
+| `virsh` on the host says the VM doesn't exist | Plain `virsh` is using `qemu:///session`; set `LIBVIRT_DEFAULT_URI=qemu:///system` (Phase 4.2) |
 | `virsh`: permission denied | Make sure `you` is in the `libvirt` group (`groups`), then log out and back in |
 | virt-manager on Mac hangs when connecting | Use SSH keys (no passwords); include `?socket=...` and `--no-fork` |
+| virt-manager: `nc: command not found` | On the host: `sudo dnf install -y nmap-ncat` |
+| SSH still accepts passwords after hardening | Run `sudo sshd -T \| grep -i passwordauth`; make sure the hardening file sorts first (`00-...`, Phase 4.6) |
 | Cockpit page won't load | `sudo systemctl status cockpit.socket` and check the firewall (Phase 4.5) |
-| `thinkcentre.local` doesn't resolve | Check `avahi-daemon` is running and `mdns` is allowed in the firewall; if Mac and host are on different segments, use Tailscale |
-| Can't reach the host at all on office network | The network may isolate devices; use Tailscale (2.4 Option B) or ask IT |
-| Host IP changed and SSH stopped working | Use `thinkcentre.local` or Tailscale instead of a raw IP (2.4) |
+| `thinkcentre.local` doesn't resolve | Check `avahi-daemon` is running and `mdns` is allowed in the firewall; if Mac and host are on different segments, use a mesh VPN (2.4 Option B) |
+| Can't reach the host at all on office network | The network may isolate devices; use Tailscale or NetBird (2.4 Option B) or ask IT |
+| Host IP changed and SSH stopped working | Use `thinkcentre.local` or a mesh VPN name instead of a raw IP (2.4) |
+| `thinkcentre.netbird.cloud` doesn't resolve | Run `netbird status` on both machines; confirm the exact peer name on the dashboard's **Peers** page |
+| NetBird ping works but SSH/Cockpit times out | `sudo firewall-cmd --get-active-zones`; NetBird's interface must be in a zone allowing `ssh` and `cockpit` (the default `public` zone does) |
+| Host disappeared from NetBird after going offline | The setup key was ephemeral; create a non-ephemeral key and run `sudo netbird up --setup-key ...` again |
+| NetBird connection feels slow | `netbird status -d`; a relayed connection is slower than direct P2P, which strict networks may block |
 | `virsh domifaddr` shows nothing | Wait for the VM to fully boot; try `virsh domifaddr vm1 --source arp` |
+| VM IP changed and `ssh vm1` fails | Pin the IP with a DHCP reservation (Phase 6.4) |
 | `virsh console` is blank | Press Enter; if still blank, enable `serial-getty@ttyS0` inside the VM |
+| `virsh undefine` fails (nvram or snapshots) | Add `--nvram --snapshots-metadata` (Phase 7) |
 | Rocky 10 VM won't boot | Use `--cpu host-passthrough` (Rocky 10 guests need x86-64-v3) |
 | `virt-host-validate` fails on hardware virtualization | Enable VT-x in the BIOS (Phase 2.1) |
 | Running out of disk space | Check `df -h /`; see the partitioning note in Phase 2.2 |
